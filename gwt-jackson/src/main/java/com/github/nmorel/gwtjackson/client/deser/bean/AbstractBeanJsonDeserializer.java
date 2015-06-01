@@ -160,7 +160,10 @@ public abstract class AbstractBeanJsonDeserializer<T> extends JsonDeserializer<T
         if ( null != identityInfo && !JsonToken.BEGIN_OBJECT.equals( token ) && !JsonToken.BEGIN_ARRAY.equals( token ) ) {
             Object id;
             if ( identityInfo.isProperty() ) {
-                BeanPropertyDeserializer<T, ?> propertyDeserializer = deserializers.get( identityInfo.getPropertyName() );
+                HasDeserializerAndParameters propertyDeserializer = deserializers.get( identityInfo.getPropertyName() );
+                if ( null == propertyDeserializer ) {
+                    propertyDeserializer = instanceBuilder.getParametersDeserializer().get( identityInfo.getPropertyName() );
+                }
                 id = propertyDeserializer.getDeserializer().deserialize( reader, ctx );
             } else {
                 id = identityInfo.readId( reader, ctx );
@@ -282,14 +285,68 @@ public abstract class AbstractBeanJsonDeserializer<T> extends JsonDeserializer<T
         Set<String> requiredPropertiesLeft = requiredProperties.isEmpty() ? Collections
                 .<String>emptySet() : new HashSet<String>( requiredProperties );
 
+        // we first look for identity. It can also buffer properties it is not in current reader position.
+        Object id = null;
+        if ( null != identityInfo ) {
+            JsonReader identityReader = null;
+
+            // we look if it has not been already buffered
+            String propertyValue = null;
+
+            // we fisrt look if the identity property has not been read already
+            if ( null != bufferedProperties ) {
+                propertyValue = bufferedProperties.remove( identityInfo.getPropertyName() );
+            }
+
+            if ( null != propertyValue ) {
+                identityReader = ctx.newJsonReader( propertyValue );
+            } else {
+                // we search for the identity property
+                while ( JsonToken.NAME.equals( reader.peek() ) ) {
+                    String name = reader.nextName();
+
+                    if ( ignoredProperties.contains( name ) ) {
+                        reader.skipValue();
+                        continue;
+                    }
+
+                    if ( identityInfo.getPropertyName().equals( name ) ) {
+                        identityReader = reader;
+                        break;
+                    } else {
+                        if ( null == bufferedProperties ) {
+                            bufferedProperties = new HashMap<String, String>();
+                        }
+                        bufferedProperties.put( name, reader.nextValue() );
+                    }
+                }
+            }
+
+            if ( null != identityReader ) {
+                if ( identityInfo.isProperty() ) {
+                    BeanPropertyDeserializer propertyDeserializer = deserializers.get( identityInfo.getPropertyName() );
+                    id = propertyDeserializer.getDeserializer().deserialize( identityReader, ctx );
+                } else {
+                    id = identityInfo.readId( identityReader, ctx );
+                }
+            }
+        }
+
         // we first instantiate the bean. It might buffer properties if there are properties required for constructor and they are not in
         // first position
         Instance<T> instance = instanceBuilder.newInstance( reader, ctx, bufferedProperties );
 
         T bean = instance.getInstance();
+        bufferedProperties = instance.getBufferedProperties();
 
-        // we then look for identity. It can also buffer properties it is not in current reader position.
-        bufferedProperties = readIdentityProperty( identityInfo, bean, instance.getBufferedProperties(), reader, ctx, ignoredProperties );
+        // we save the instance if we have an id
+        if ( null != id ) {
+            if ( identityInfo.isProperty() ) {
+                BeanPropertyDeserializer propertyDeserializer = deserializers.get( identityInfo.getPropertyName() );
+                propertyDeserializer.setValue( bean, id, ctx );
+            }
+            ctx.addObjectId( identityInfo.newIdKey( id ), bean );
+        }
 
         // we flush any buffered properties
         flushBufferedProperties( bean, bufferedProperties, requiredPropertiesLeft, ctx, ignoreUnknown, ignoredProperties );
@@ -328,61 +385,8 @@ public abstract class AbstractBeanJsonDeserializer<T> extends JsonDeserializer<T
         return bean;
     }
 
-    private Map<String, String> readIdentityProperty( IdentityDeserializationInfo identityInfo, T bean, Map<String, String>
+    private Object readIdentityProperty( IdentityDeserializationInfo identityInfo, Map<String, String>
             bufferedProperties, JsonReader reader, final JsonDeserializationContext ctx, Set<String> ignoredProperties ) {
-        if ( null == identityInfo ) {
-            return bufferedProperties;
-        }
-
-        JsonReader identityReader = null;
-
-        // we look if it has not been already buffered
-        String propertyValue = null;
-
-        // we fisrt look if the identity property has not been read already
-        if ( null != bufferedProperties ) {
-            propertyValue = bufferedProperties.remove( identityInfo.getPropertyName() );
-        }
-
-        if ( null != propertyValue ) {
-            identityReader = ctx.newJsonReader( propertyValue );
-        } else {
-            // we search for the identity property
-            while ( JsonToken.NAME.equals( reader.peek() ) ) {
-                String name = reader.nextName();
-
-                if ( ignoredProperties.contains( name ) ) {
-                    reader.skipValue();
-                    continue;
-                }
-
-                if ( identityInfo.getPropertyName().equals( name ) ) {
-                    identityReader = reader;
-                    break;
-                } else {
-                    if ( null == bufferedProperties ) {
-                        bufferedProperties = new HashMap<String, String>();
-                    }
-                    bufferedProperties.put( name, reader.nextValue() );
-                }
-            }
-        }
-
-        if ( null != identityReader ) {
-            Object id;
-            if ( identityInfo.isProperty() ) {
-                BeanPropertyDeserializer propertyDeserializer = deserializers.get( identityInfo.getPropertyName() );
-                id = propertyDeserializer.getDeserializer().deserialize( identityReader, ctx );
-                if ( null != id ) {
-                    propertyDeserializer.setValue( bean, id, ctx );
-                }
-            } else {
-                id = identityInfo.readId( identityReader, ctx );
-            }
-            if ( null != id ) {
-                ctx.addObjectId( identityInfo.newIdKey( id ), bean );
-            }
-        }
 
         return bufferedProperties;
     }

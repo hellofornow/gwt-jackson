@@ -24,6 +24,7 @@ import com.github.nmorel.gwtjackson.shared.advanced.identity.ObjectIdDeserializa
 import com.github.nmorel.gwtjackson.shared.advanced.identity.ObjectIdDeserializationTester.IdPropertyWrapperExt;
 import com.github.nmorel.gwtjackson.shared.advanced.identity.ObjectIdDeserializationTester.Identifiable;
 import com.github.nmorel.gwtjackson.shared.advanced.identity.ObjectIdDeserializationTester.IdentifiableCustom;
+import com.github.nmorel.gwtjackson.shared.advanced.identity.ObjectIdDeserializationTester.ListFinalPropertyId;
 import com.github.nmorel.gwtjackson.shared.advanced.identity.ObjectIdDeserializationTester.UUIDNode;
 import org.junit.Test;
 
@@ -72,5 +73,10 @@ public class ObjectIdDeserializationJacksonTest extends AbstractJacksonTest {
     @Test
     public void testCustomDeserializationParameter() {
         tester.testCustomDeserializationParameter( createMapper( IdParameterWrapperExt.class ) );
+    }
+
+    @Test
+    public void testFinalPropertyId() {
+        tester.testFinalPropertyId( createMapper( ListFinalPropertyId.class ) );
     }
 }

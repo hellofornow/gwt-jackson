@@ -73,7 +73,6 @@ import com.google.gwt.thirdparty.guava.common.collect.ImmutableList;
 import com.google.gwt.thirdparty.guava.common.collect.ImmutableMap;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
-import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
@@ -144,20 +143,20 @@ public class BeanJsonDeserializerCreator extends AbstractBeanJsonCreator {
     }
 
     private MethodSpec buildInitInstanceBuilderMethod() throws UnableToCompleteException, UnsupportedTypeException {
-        return MethodSpec.methodBuilder( "initInstanceBuilder" )
+
+        MethodSpec.Builder initInstanceBuilderMethodBuilder = MethodSpec.methodBuilder( "initInstanceBuilder" )
                 .addModifiers( Modifier.PROTECTED )
                 .addAnnotation( Override.class )
-                .returns( parameterizedName( InstanceBuilder.class, beanInfo.getType() ) )
-                .addStatement( "return $L", buildInstanceBuilderClass() )
-                .build();
-    }
+                .returns( parameterizedName( InstanceBuilder.class, beanInfo.getType() ) );
 
-    private TypeSpec buildInstanceBuilderClass() throws UnableToCompleteException, UnsupportedTypeException {
-
-        TypeSpec.Builder instanceBuilder = TypeSpec.anonymousClassBuilder( "" )
-                .addSuperinterface( parameterizedName( InstanceBuilder.class, beanInfo.getType() ) );
+        TypeName deserializersMapTypeName = ParameterizedTypeName.get( ClassName.get( SimpleStringMap.class ),
+                ClassName.get( HasDeserializerAndParameters.class ) );
 
         if ( null != beanInfo.getCreatorParameters() && !beanInfo.getCreatorParameters().isEmpty() ) {
+
+            initInstanceBuilderMethodBuilder
+                    .addStatement( "final $T deserializers = $T.createObject().cast()", deserializersMapTypeName, SimpleStringMap.class );
+
             // for each constructor parameters, we initialize its deserializer.
             int index = 0;
             for ( Entry<String, JParameter> entry : beanInfo.getCreatorParameters().entrySet() ) {
@@ -173,15 +172,23 @@ public class BeanJsonDeserializerCreator extends AbstractBeanJsonCreator {
                     deserializerBuilder.addMethod( method );
                 }
 
-                instanceBuilder.addField( FieldSpec
-                        .builder( deserializerTypeName,
-                                INSTANCE_BUILDER_DESERIALIZER_PREFIX + String.format( INSTANCE_BUILDER_VARIABLE_FORMAT, index++ ),
-                                Modifier.PRIVATE, Modifier.FINAL )
-                        .initializer( "$L", deserializerBuilder.build() )
-                        .build() );
+                String deserializerName = INSTANCE_BUILDER_DESERIALIZER_PREFIX + String
+                        .format( INSTANCE_BUILDER_VARIABLE_FORMAT, index++ );
+                initInstanceBuilderMethodBuilder
+                        .addStatement( "final $T $L = $L", deserializerTypeName, deserializerName, deserializerBuilder.build() );
+                initInstanceBuilderMethodBuilder.addStatement( "deserializers.put($S, $L)", entry.getKey(), deserializerName );
             }
+        } else {
+            initInstanceBuilderMethodBuilder.addStatement( "final $T deserializers = null", deserializersMapTypeName );
         }
+        initInstanceBuilderMethodBuilder.addCode( "\n" );
 
+        return initInstanceBuilderMethodBuilder
+                .addStatement( "return $L", buildInstanceBuilderClass() )
+                .build();
+    }
+
+    private TypeSpec buildInstanceBuilderClass() {
         MethodSpec createMethod = buildInstanceBuilderCreateMethod();
 
         MethodSpec.Builder newInstanceMethodBuilder = MethodSpec.methodBuilder( "newInstance" )
@@ -200,8 +207,19 @@ public class BeanJsonDeserializerCreator extends AbstractBeanJsonCreator {
             buildNewInstanceMethodForConstructorOrFactoryMethod( newInstanceMethodBuilder, createMethod );
         }
 
-        instanceBuilder.addMethod( newInstanceMethodBuilder.build() );
-        instanceBuilder.addMethod( createMethod );
+        MethodSpec.Builder deserializersGetter = MethodSpec.methodBuilder( "getParametersDeserializer" )
+                .addModifiers( Modifier.PUBLIC )
+                .addAnnotation( Override.class )
+                .addStatement( "return deserializers" )
+                .returns( ParameterizedTypeName.get( ClassName.get( SimpleStringMap.class ),
+                        ClassName.get( HasDeserializerAndParameters.class ) ) );
+
+        TypeSpec.Builder instanceBuilder = TypeSpec.anonymousClassBuilder( "" )
+                .addSuperinterface( parameterizedName( InstanceBuilder.class, beanInfo.getType() ) )
+                .addMethod( newInstanceMethodBuilder.build() )
+                .addMethod( createMethod )
+                .addMethod( deserializersGetter.build() );
+
         return instanceBuilder.build();
     }
 
